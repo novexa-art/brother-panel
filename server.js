@@ -17,7 +17,7 @@ const TELEGRAM_BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN;
 
 const TELEGRAM_CHAT_ID =
-  "1004480783091";
+  "-1004480783091";
 
 
 /* =========================
